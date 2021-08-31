@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html>
+
+<script src="https://kit.fontawesome.com/d42797d33e.js" crossorigin="anonymous"></script>
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@svgdotjs/svg.js@3.0/dist/svg.min.js"></script>
+<script type="text/javascript" src="libs/svg.path.js"></script>
+
+<head>
+    <style>
+        div.svg {
+            position: fixed;
+            left: 0;
+            top: 0;
+        }
+    </style>
+</head>
+
+<body style="margin: 0px;background-color: antiquewhite;">
+    <div class="svg" id="canvas">
+    </div>
+    <div class="svg" id="grid">
+    </div>
+</body>
+
+<script>
+    var canvas = $("#canvas");
+    var draw = SVG().addTo('#canvas').size(window.innerWidth, window.innerHeight)
+    var grid = SVG().addTo('#grid').size(window.innerWidth, window.innerHeight)
+    let symmetryCount = 6;
+    let angle = 360 / symmetryCount;
+    let gridSize = 35;
+    let drawing = false;
+    let origin = [canvas.width() / 2, canvas.height() / 2];
+
+    let lineWidth = 4;
+
+
+    var activePath = Array(); // Contains the path currently being drawn
+    var hoverPath = Array(); // Array containing the hoverin paths (Used in deleting old hovering)
+    var pathArchive = Array(); // Array containing all previously drawn paths
+    var activeLayer = draw.group().addClass("current layer");
+    var gridgroup = grid.group().addClass("Gridgroup");
+    var hoverLayer = draw.group().addClass("hover layer");
+    var currentMouseGridPosition = Array();
+    var previousMouseGridPosition = Array();
+
+    let pathStartPoint = Array(); // starting point of last path
+    let pathLastPoint = Array(); // last point placed
+
+    let gridPoints = Array(); // contains all the current grid cordinates
+    let upperLeftPoint = Array(); // most upper left point on current grid
+
+    drawGrid();
+
+
+
+    let cursor = grid.circle(10).move(origin[0] - 5, origin[1] - 5).fill("none").stroke({ width: 1, color: "black" });
+    let TOOL = "LINE"
+    let ARC_DIRECTION = 1;
+    let FRACTAL_OFFSET = 3;
+    let FRACTALIZE = true;
+
+    function drawHowerLine() {
+        clearHoverLines();
+        let currentPos = fractalizePoint([canvas.width() / 2, canvas.height() / 2], currentMouseGridPosition);
+        for (let a = 0; a < pathLastPoint.length; a++) {
+            for (let b = 0; b < pathLastPoint[a].length; b++) {
+                let startP = pathLastPoint[a][b];
+                let endP = currentPos[a][b];
+                let newLine = draw.path().fill('none').stroke({ color: 'black', width: lineWidth, linecap: 'round' }).addClass("hover");;
+                //    newLine.M(startP[0], startP[1]);
+                addSegement(newLine, startP, endP);
+                //     newLine.L(endP[0], endP[1]);
+                hoverLayer.add(newLine);
+                hoverPath.push(newLine);
+            }
+        }
+    }
+    function clearHoverLines() {
+        hoverPath.forEach(function name(params) {
+            params.remove();
+        });
+        hoverPath = []
+    }
+
+    function mouseClick(e) {
+        updateMousePos(e);
+        drawing = true;
+
+        pathStartPoint = fractalizePoint([canvas.width() / 2, canvas.height() / 2], currentMouseGridPosition);
+        // Continuing old path
+        if (JSON.stringify(pathLastPoint) === JSON.stringify(pathStartPoint)) {
+            console.log("CONTINUE")
+        }
+
+        else {
+            pathLastPoint = pathStartPoint;
+            makeNewPath();
+        }
+    }
+    function mouseMove(e) {
+        positionToGrid([e.pageX, e.pageY], true);
+        if (!drawing) return;
+        updateMousePos(e);
+        drawHowerLine();
+    }
+    function mouseUp() {
+        drawing = false;
+        addPointToActivePath(currentMouseGridPosition);
+        clearHoverLines();
+        if (activePath[0].getSegmentCount() < 2) clearActivePath(true);
+    }
+    function clearActivePath(remove) {
+        if (remove)
+            activePath.forEach(function name(params) { params.remove(); });
+        activePath = []
+    }
+    function makeNewPath() {
+        if (activePath && activePath.length > 0) {
+            console.log("path archived")
+            pathArchive.push(activePath);
+        }
+        clearActivePath();
+        // Adds new paths to layer and saves references
+        for (let a = 0; a < pathStartPoint.length; a++) {
+            for (let b = 0; b < pathStartPoint[a].length; b++) {
+                let newLine = draw.path().fill('none').stroke({ color: 'black', width: lineWidth, linecap: 'round' });
+                newLine.M(pathStartPoint[a][b][0], pathStartPoint[a][b][1]);
+                activeLayer.add(newLine);
+                activePath.push(newLine);
+            }
+        }
+    }
+    function addPointToActivePath() {
+        clearHoverLines();
+        let pathCurrentPoint = fractalizePoint([canvas.width() / 2, canvas.height() / 2], currentMouseGridPosition);
+        let pathNro = 0;
+        for (let a = 0; a < pathStartPoint.length; a++) {
+            for (let b = 0; b < pathStartPoint[a].length; b++) {
+                //   activePath[pathNro].L(pathCurrentPoint[a][b][0], pathCurrentPoint[a][b][1]);
+                addSegement(activePath[pathNro], pathStartPoint[a][b], pathCurrentPoint[a][b]);
+                pathNro++;
+            }
+        }
+        pathLastPoint = pathCurrentPoint;
+    }
+
+
+    function addSegement(path, pStart, pEnd) {
+        if (TOOL === "LINE" || TOOL === "LINEPEN") {
+            path.M(pStart[0], pStart[1])
+            path.L(pEnd[0], pEnd[1]);
+        }
+        if (TOOL === "ARC") {
+            let distance = getDistance(pStart, pEnd);
+            path.M({ x: pStart[0], y: pStart[1] }).A(distance / 2, distance / 2, 0, 0, ARC_DIRECTION, { x: pEnd[0], y: pEnd[1] });
+        }
+        return path;
+    }
+
+    function undo() {
+        if (activePath) {
+            console.log("We had active path:", activePath)
+            activePath.forEach(symmetryPath => {
+                symmetryPath.removeSegment(symmetryPath.getSegmentCount() - 1);
+                symmetryPath.removeSegment(symmetryPath.getSegmentCount() - 1);
+                if (symmetryPath.getSegmentCount() === 1)
+                    symmetryPath.remove();
+            });
+            if (activePath[0].getSegmentCount() === 1) activePath = undefined
+        }
+        else {
+            let prevPath = pathArchive[pathArchive.length - 1];
+            if (prevPath)
+                prevPath.forEach(symmetryPath => {
+                    symmetryPath.removeSegment(symmetryPath.getSegmentCount() - 1);
+                    symmetryPath.removeSegment(symmetryPath.getSegmentCount() - 1);
+                    if (symmetryPath.getSegmentCount() <= 1)
+                        symmetryPath.remove();
+                });
+            if (prevPath[0].getSegmentCount() <= 1) pathArchive.pop();
+        }
+
+
+    }
+    function updateMousePos(e) {
+        previousMouseGridPosition = currentMouseGridPosition;
+        currentMouseGridPosition = positionToGrid([e.pageX, e.pageY]);
+    }
+
+
+
+    document.addEventListener('keydown', (e) => {
+        console.log(e.key);
+        if (e.keyCode === 32) addPointToActivePath();
+        if (e.key === "l") {
+            TOOL = "LINE"
+            drawHowerLine();
+        }
+        if (e.key === "a") {
+            if (TOOL === "ARC") {
+                if (ARC_DIRECTION === 1) ARC_DIRECTION = 0;
+                else ARC_DIRECTION = 1;
+                drawHowerLine();
+            }
+            TOOL = "ARC"
+        }
+        if (e.key === "z") undo();
+        if (e.key === "+") FRACTAL_OFFSET++;
+        if (e.key === "-") FRACTAL_OFFSET--;
+        if (e.key === "f") FRACTALIZE = !FRACTALIZE;
+        if (e.key === "d") {
+            download('art.svg', draw.svg());
+        }
+        // DOWN ARROW
+        if (e.keyCode === 40) {
+            gridSize /= 2;
+            drawGrid();
+        }
+        // UP ARROW
+        if (e.keyCode === 38) {
+            gridSize *= 2;
+            drawGrid();
+        }
+    });
+
+
+
+    let symmetry = (o, p) => {
+        let reflections = Array();
+        for (let a = 0; a < symmetryCount; a++) {
+            reflections.push(rotateAroundPoint(o, p, angle * a));
+        }
+        return reflections;
+    }
+    let halfDistance = (o, p) => {
+        let yChange = gridSize / 2 * Math.tan(60 * (Math.PI / 180))
+        let d = [p[0] - o[0], p[1] - o[1]];
+        let ret = [o[0] + d[0] + gridSize / 2 * FRACTAL_OFFSET, o[1] + d[1] + yChange * FRACTAL_OFFSET];
+
+        ret.push(p)
+        return ret;
+    }
+    let stepCloserToOrigo = (o, p) => {
+        let d = [p[0] - o[0], p[1] - o[1]];
+        let ret = [o[0] + d[0] / 2, o[1] + d[1] / 2];
+
+        ret.push(p)
+        return ret;
+    }
+    function rotateAroundPoint(o, p, angle) {
+        let radians = (Math.PI / 180) * angle,
+            cos = Math.cos(radians),
+            sin = Math.sin(radians),
+            nx = (cos * (p[0] - o[0])) + (sin * (p[1] - o[1])) + o[0],
+            ny = (cos * (p[1] - o[1])) - (sin * (p[0] - o[0])) + o[1];
+        return [nx, ny];
+    }
+
+    let fractalizePoint = (o, p, debugs) => {
+        let fractalPoints = new Array();
+        // Creates symmetry
+        let syms = symmetry(o, p);
+        syms.forEach(s => {
+            if (debugs) var rect = draw.circle(pointSize).fill({ color: 'red', opacity: transparency }).move(s[0] - pointSize, s[1] - pointSize)
+        });
+        fractalPoints.push(syms); // Saves symmetry points
+        if (!FRACTALIZE)
+            return fractalPoints;
+        let halfDist = Array();
+        syms.forEach(sympoint => {
+            halfDist.push(halfDistance(o, sympoint))
+        });
+
+        let halfDistSym = Array();
+        halfDist.forEach(sympoint => {
+            halfDistSym = halfDistSym.concat(symmetry([sympoint[2][0], sympoint[2][1]], [sympoint[0], sympoint[1]]))
+        });
+
+        halfDistSym.forEach(s => {
+            if (debugs) var rect = draw.circle(pointSize).fill({ color: 'green', opacity: transparency }).move(s[0] - pointSize, s[1] - pointSize)
+        });
+
+        fractalPoints.push(halfDistSym); // Saves half distance symmetry points
+
+        return fractalPoints
+    }
+
+    function getDistance(p1, p2) {
+        return Math.hypot(p2[0] - p1[0], p2[1] - p1[1])
+    }
+
+    // Draws a grid with the current gridSize
+    function drawGrid() {
+        // Remove old grid if was not empty
+        gridPoints = []
+        $(".Gridgroup").children().remove();
+
+        let gridRow = Array();
+        let yChange = gridSize / 2 * Math.tan(60 * (Math.PI / 180))
+        let xChange = gridSize;
+        // Calculates the top left starting point for the grid
+        let xStart = origin[0] - parseInt(origin[0] / xChange + 1) * xChange;
+        let yStart = origin[1] - parseInt(origin[1] / yChange + 1) * yChange;
+        upperLeftPoint = [xStart, yStart];
+        grid.circle(10).move(origin[0] - 5, origin[1] - 5).fill("none").stroke({ width: 1, color: "blue" });
+
+        let x = xStart;
+        let y = yStart;
+        let evenLine = false;
+        if (parseInt(origin[1] / yChange) % 2 === 0) {
+            evenLine = true;
+            x += xChange / 2;
+        }
+        do {
+            do {
+                let point = grid.circle(2).move(x - 1, y - 1).fill("blue");
+                gridgroup.add(point)
+                x += xChange;
+                gridRow.push([x, y]);
+            }
+            while (x < canvas.width())
+            if (evenLine) {
+                x = xStart;
+                evenLine = false;
+            }
+            else {
+                x = xStart + xChange / 2;
+                evenLine = true;
+            }
+            y += yChange;
+            gridPoints.push(gridRow);
+            gridRow = []
+
+        }
+        while (y < canvas.height())
+    }
+
+
+
+    function positionToGrid(mp, updateCursor) {
+        let dx = upperLeftPoint[0] - mp[0];
+        let dy = upperLeftPoint[1] - mp[1]
+
+        let yChange = gridSize / 2 * Math.tan(60 * (Math.PI / 180))
+        let xChange = gridSize;
+        let ySteps = parseInt(Math.abs(dy) / yChange);
+        let xSteps = parseInt(Math.abs(dx) / xChange);
+
+        // Possible closest points
+        let possiblePoints = Array();
+        possiblePoints.push(gridPoints[ySteps][xSteps]);
+        possiblePoints.push(gridPoints[ySteps][xSteps - 1]);
+        possiblePoints.push(gridPoints[ySteps + 1][xSteps]);
+        possiblePoints.push(gridPoints[ySteps + 1][xSteps - 1]);
+
+        // Get distances and find the index of closest
+        let distances = possiblePoints.map(x => getDistance(x, mp));
+        let idx = distances.indexOf(Math.min.apply(null, distances))
+
+        if (updateCursor) cursor.move(possiblePoints[idx][0] - 5, possiblePoints[idx][1] - 5);
+        return possiblePoints[idx];
+    }
+    function download(filename, text) {
+
+        var element = document.createElement('a');
+        element.setAttribute('href', 'data:text/plain;charset=utf-8,' + encodeURIComponent(text));
+        element.setAttribute('download', filename);
+        element.style.display = 'none';
+        document.body.appendChild(element);
+        element.click();
+        document.body.removeChild(element);
+
+    }
+
+
+
+    document.onmousedown = mouseClick;
+    document.onmousemove = mouseMove;
+    document.onmouseup = mouseUp;
+
+
+</script>
+
+</html>
