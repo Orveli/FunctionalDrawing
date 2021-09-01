@@ -1,11 +1,24 @@
+<!--
+    TODO: 
+    - Make lines and symbols selectable (and deletable)
+    - Make it possible to change the symmetry count and symmetry count with fractalized entities
+    - Write a mirroring function
+    - Make it possible to redefine origin and add the possibility to draw symmetry with a given orihgin
+    - Add possibility to save symbols out of drawings and to add them to existing drawings
+    - Add a ui
+    - Add a grid that swows the ender 3 build plate size ratio and calculate the correct line widths for the printers nozzle
+    - Changing FRACTAL_OFFSET should recalculate starting positions and thus update the view
+    - Fractalizing creates dubplicate paths and there should be a function that checks for them and deletes them
+    KNOWN BUGS:
+    - You sometimes get errors when trying to draw a path due to something related to continuing on drawing to a existing path
+    - Moving the mouse to the right or bottom end of the grid prints out a error to the console as it goes outsiede the grid array
+-->
 <!DOCTYPE html>
 <html>
-
 <script src="https://kit.fontawesome.com/d42797d33e.js" crossorigin="anonymous"></script>
 <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@svgdotjs/svg.js@3.0/dist/svg.min.js"></script>
 <script type="text/javascript" src="libs/svg.path.js"></script>
-
 <head>
     <style>
         div.svg {
@@ -15,26 +28,23 @@
         }
     </style>
 </head>
-
 <body style="margin: 0px;background-color: antiquewhite;">
     <div class="svg" id="canvas">
     </div>
     <div class="svg" id="grid">
     </div>
 </body>
-
 <script>
     var canvas = $("#canvas");
     var draw = SVG().addTo('#canvas').size(window.innerWidth, window.innerHeight)
     var grid = SVG().addTo('#grid').size(window.innerWidth, window.innerHeight)
+   
     let symmetryCount = 6;
     let angle = 360 / symmetryCount;
     let gridSize = 35;
     let drawing = false;
     let origin = [canvas.width() / 2, canvas.height() / 2];
-
-    let lineWidth = 4;
-
+    let lineWidth = 2;
 
     var activePath = Array(); // Contains the path currently being drawn
     var hoverPath = Array(); // Array containing the hoverin paths (Used in deleting old hovering)
@@ -53,14 +63,13 @@
 
     drawGrid();
 
-
-
     let cursor = grid.circle(10).move(origin[0] - 5, origin[1] - 5).fill("none").stroke({ width: 1, color: "black" });
-    let TOOL = "LINE"
+    let TOOL = "LINE" // Current drawing tool
     let ARC_DIRECTION = 1;
     let FRACTAL_OFFSET = 3;
     let FRACTALIZE = true;
 
+    // Draws temporary howering lines to visualize what would be drawn if user releases mouse
     function drawHowerLine() {
         clearHoverLines();
         let currentPos = fractalizePoint([canvas.width() / 2, canvas.height() / 2], currentMouseGridPosition);
@@ -69,32 +78,26 @@
                 let startP = pathLastPoint[a][b];
                 let endP = currentPos[a][b];
                 let newLine = draw.path().fill('none').stroke({ color: 'black', width: lineWidth, linecap: 'round' }).addClass("hover");;
-                //    newLine.M(startP[0], startP[1]);
                 addSegement(newLine, startP, endP);
-                //     newLine.L(endP[0], endP[1]);
                 hoverLayer.add(newLine);
                 hoverPath.push(newLine);
             }
         }
     }
+    // Clears the temporary hovering lines from the dom
     function clearHoverLines() {
         hoverPath.forEach(function name(params) {
             params.remove();
         });
         hoverPath = []
     }
-
     function mouseClick(e) {
         updateMousePos(e);
         drawing = true;
 
         pathStartPoint = fractalizePoint([canvas.width() / 2, canvas.height() / 2], currentMouseGridPosition);
-        // Continuing old path
-        if (JSON.stringify(pathLastPoint) === JSON.stringify(pathStartPoint)) {
-            console.log("CONTINUE")
-        }
-
-        else {
+        //  !Continuing old path
+        if (JSON.stringify(pathLastPoint) != JSON.stringify(pathStartPoint)) {
             pathLastPoint = pathStartPoint;
             makeNewPath();
         }
@@ -117,10 +120,8 @@
         activePath = []
     }
     function makeNewPath() {
-        if (activePath && activePath.length > 0) {
-            console.log("path archived")
+        if (activePath && activePath.length > 0)
             pathArchive.push(activePath);
-        }
         clearActivePath();
         // Adds new paths to layer and saves references
         for (let a = 0; a < pathStartPoint.length; a++) {
@@ -138,15 +139,13 @@
         let pathNro = 0;
         for (let a = 0; a < pathStartPoint.length; a++) {
             for (let b = 0; b < pathStartPoint[a].length; b++) {
-                //   activePath[pathNro].L(pathCurrentPoint[a][b][0], pathCurrentPoint[a][b][1]);
                 addSegement(activePath[pathNro], pathStartPoint[a][b], pathCurrentPoint[a][b]);
                 pathNro++;
             }
         }
         pathLastPoint = pathCurrentPoint;
     }
-
-
+    // function that determines what type of line segment should be added to the path
     function addSegement(path, pStart, pEnd) {
         if (TOOL === "LINE" || TOOL === "LINEPEN") {
             path.M(pStart[0], pStart[1])
@@ -158,10 +157,8 @@
         }
         return path;
     }
-
     function undo() {
         if (activePath) {
-            console.log("We had active path:", activePath)
             activePath.forEach(symmetryPath => {
                 symmetryPath.removeSegment(symmetryPath.getSegmentCount() - 1);
                 symmetryPath.removeSegment(symmetryPath.getSegmentCount() - 1);
@@ -188,9 +185,7 @@
         previousMouseGridPosition = currentMouseGridPosition;
         currentMouseGridPosition = positionToGrid([e.pageX, e.pageY]);
     }
-
-
-
+    // Catches keyboard events
     document.addEventListener('keydown', (e) => {
         console.log(e.key);
         if (e.keyCode === 32) addPointToActivePath();
@@ -223,10 +218,17 @@
             gridSize *= 2;
             drawGrid();
         }
+        if(e.key==="1")
+            lineWidth = 0.8;
+            if(e.key==="2")
+            lineWidth = 1.6;
+            if(e.key==="3")
+            lineWidth = 2.4;
+
+            if(e.key==="4")
+            lineWidth = 3.2;
     });
-
-
-
+    // Functions used in generating more points to be drawn
     let symmetry = (o, p) => {
         let reflections = Array();
         for (let a = 0; a < symmetryCount; a++) {
@@ -238,7 +240,6 @@
         let yChange = gridSize / 2 * Math.tan(60 * (Math.PI / 180))
         let d = [p[0] - o[0], p[1] - o[1]];
         let ret = [o[0] + d[0] + gridSize / 2 * FRACTAL_OFFSET, o[1] + d[1] + yChange * FRACTAL_OFFSET];
-
         ret.push(p)
         return ret;
     }
@@ -249,6 +250,7 @@
         ret.push(p)
         return ret;
     }
+    // Rotates a point (p) around a point (o) by a given angle    
     function rotateAroundPoint(o, p, angle) {
         let radians = (Math.PI / 180) * angle,
             cos = Math.cos(radians),
@@ -257,43 +259,52 @@
             ny = (cos * (p[1] - o[1])) - (sin * (p[0] - o[0])) + o[1];
         return [nx, ny];
     }
-
+    // Does calculations that generate extra points to be drawn
     let fractalizePoint = (o, p, debugs) => {
+        // Will be returned
         let fractalPoints = new Array();
+
         // Creates symmetry
         let syms = symmetry(o, p);
-        syms.forEach(s => {
-            if (debugs) var rect = draw.circle(pointSize).fill({ color: 'red', opacity: transparency }).move(s[0] - pointSize, s[1] - pointSize)
-        });
-        fractalPoints.push(syms); // Saves symmetry points
+        fractalPoints.push(syms); // Saves points
+
         if (!FRACTALIZE)
             return fractalPoints;
+
+        // Steps outwards
         let halfDist = Array();
         syms.forEach(sympoint => {
             halfDist.push(halfDistance(o, sympoint))
         });
-
+        // Creates new symmetry around a new origin
         let halfDistSym = Array();
         halfDist.forEach(sympoint => {
             halfDistSym = halfDistSym.concat(symmetry([sympoint[2][0], sympoint[2][1]], [sympoint[0], sympoint[1]]))
         });
+        fractalPoints.push(halfDistSym); // Saves points
 
-        halfDistSym.forEach(s => {
-            if (debugs) var rect = draw.circle(pointSize).fill({ color: 'green', opacity: transparency }).move(s[0] - pointSize, s[1] - pointSize)
+
+        // Steps outwards
+        let halfDist2 = Array();
+        halfDistSym.forEach(sympoint => {
+            halfDist2.push(halfDistance(o, sympoint))
         });
+        // Creates new symmetry around a new origin
+        let halfDistSym2 = Array();
+        halfDist2.forEach(sympoint => {
+            halfDistSym2 = halfDistSym2.concat(symmetry([sympoint[2][0], sympoint[2][1]], [sympoint[0], sympoint[1]]))
+        });
+        fractalPoints.push(halfDistSym2); // Saves points
 
-        fractalPoints.push(halfDistSym); // Saves half distance symmetry points
-
-        return fractalPoints
+        return fractalPoints 
     }
-
+    // Gets the distance between two points
     function getDistance(p1, p2) {
         return Math.hypot(p2[0] - p1[0], p2[1] - p1[1])
     }
-
     // Draws a grid with the current gridSize
     function drawGrid() {
-        // Remove old grid if was not empty
+        // Remove old grid
         gridPoints = []
         $(".Gridgroup").children().remove();
 
@@ -304,7 +315,7 @@
         let xStart = origin[0] - parseInt(origin[0] / xChange + 1) * xChange;
         let yStart = origin[1] - parseInt(origin[1] / yChange + 1) * yChange;
         upperLeftPoint = [xStart, yStart];
-        grid.circle(10).move(origin[0] - 5, origin[1] - 5).fill("none").stroke({ width: 1, color: "blue" });
+        grid.circle(10).move(origin[0] - 5, origin[1] - 5).fill("none").stroke({ width: 1, color: "blue", opacity: 0.5 });
 
         let x = xStart;
         let y = yStart;
@@ -315,7 +326,7 @@
         }
         do {
             do {
-                let point = grid.circle(2).move(x - 1, y - 1).fill("blue");
+                let point = grid.circle(2).move(x - 1, y - 1).fill({color: "blue", opacity: 0.5});
                 gridgroup.add(point)
                 x += xChange;
                 gridRow.push([x, y]);
@@ -336,9 +347,7 @@
         }
         while (y < canvas.height())
     }
-
-
-
+    // Determines the nearest gridpoint based upon mouse position (mp) and updates the cursos position (updateCursor)
     function positionToGrid(mp, updateCursor) {
         let dx = upperLeftPoint[0] - mp[0];
         let dy = upperLeftPoint[1] - mp[1]
@@ -362,6 +371,7 @@
         if (updateCursor) cursor.move(possiblePoints[idx][0] - 5, possiblePoints[idx][1] - 5);
         return possiblePoints[idx];
     }
+    // Downloads the artwork
     function download(filename, text) {
 
         var element = document.createElement('a');
@@ -373,14 +383,9 @@
         document.body.removeChild(element);
 
     }
-
-
-
+    // Binds mouse events to functions
     document.onmousedown = mouseClick;
     document.onmousemove = mouseMove;
     document.onmouseup = mouseUp;
-
-
 </script>
-
 </html>
