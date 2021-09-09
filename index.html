@@ -1,17 +1,13 @@
 <!--
     TODO: 
-    - Make lines and symbols selectable (and deletable)
+    - Add a ui
     - Make it possible to change the symmetry count and symmetry count with fractalized entities
     - Write a mirroring function
-    - Make it possible to redefine origin and add the possibility to draw symmetry with a given orihgin
-    - Add possibility to save symbols out of drawings and to add them to existing drawings
-    - Add a ui
-    - Add a grid that swows the ender 3 build plate size ratio and calculate the correct line widths for the printers nozzle
-    - Changing FRACTAL_OFFSET should recalculate starting positions and thus update the view
-    - Fractalizing creates dubplicate paths and there should be a function that checks for them and deletes them
+    - Fractalizing creates dublicate paths and there should be a function that checks for them and deletes them
+    - Deleting lines should also delete the corresponding symmetry lines (Add a class to every symmetry drawn and then when deleting delete all the elements with that class)
     KNOWN BUGS:
-    - You sometimes get errors when trying to draw a path due to something related to continuing on drawing to a existing path
-    - Moving the mouse to the right or bottom end of the grid prints out a error to the console as it goes outsiede the grid array
+    - Sometimes changing symmetry/fractalizing related value mid draw causes the non hover lines to be messed up
+    - Deleting symbols deletes all the symbols that were created after the deleted one
 -->
 <!DOCTYPE html>
 <html>
@@ -19,6 +15,7 @@
 <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@svgdotjs/svg.js@3.0/dist/svg.min.js"></script>
 <script type="text/javascript" src="libs/svg.path.js"></script>
+<link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
 <head>
     <style>
         div.svg {
@@ -26,60 +23,98 @@
             left: 0;
             top: 0;
         }
+        #saved {
+            position: absolute;
+            right: 0;
+            top: 0;
+            background-color: white;
+            height: 100%;
+        }
+        .symbol {
+            stroke: red;
+        }
+        .currentLayer {
+            stroke: black;
+        }
+        .hover {
+            pointer-events: all;
+            stroke: blue !important;
+        }
     </style>
 </head>
 <body style="margin: 0px;background-color: antiquewhite;">
     <div class="svg" id="canvas">
     </div>
-    <div class="svg" id="grid">
+    <div class="svg" id="grid" style="pointer-events: none;">
+    </div>
+    <div class="svg" id="uiOverlay" style="pointer-events: none;">
+    </div>
+    <div class="fileWindow" id="saved" style="overflow: auto;">
     </div>
 </body>
 <script>
-    var canvas = $("#canvas");
-    var draw = SVG().addTo('#canvas').size(window.innerWidth, window.innerHeight)
-    var grid = SVG().addTo('#grid').size(window.innerWidth, window.innerHeight)
-   
+    let canvas = $("#canvas");
+    let draw = SVG().addTo('#canvas').size(window.innerWidth, window.innerHeight)
+    let grid = SVG().addTo('#grid').size(window.innerWidth, window.innerHeight)
+    let uiOverlay = SVG().addTo('#uiOverlay').size(window.innerWidth, window.innerHeight)
+    let saved = Array();
     let symmetryCount = 6;
-    let angle = 360 / symmetryCount;
-    let gridSize = 35;
+    let gridSize = 40;
     let drawing = false;
     let origin = [canvas.width() / 2, canvas.height() / 2];
-    let lineWidth = 2;
-
-    var activePath = Array(); // Contains the path currently being drawn
-    var hoverPath = Array(); // Array containing the hoverin paths (Used in deleting old hovering)
-    var pathArchive = Array(); // Array containing all previously drawn paths
-    var activeLayer = draw.group().addClass("current layer");
-    var gridgroup = grid.group().addClass("Gridgroup");
-    var hoverLayer = draw.group().addClass("hover layer");
-    var currentMouseGridPosition = Array();
-    var previousMouseGridPosition = Array();
-
-    let pathStartPoint = Array(); // starting point of last path
-    let pathLastPoint = Array(); // last point placed
-
+    let lineWidth = 4;
+    let activePath = Array(); // Contains the path currently being drawn
+    let hoverPath = Array(); // Array containing the hoverin paths (Used in deleting old hovering)
+    let pathArchive = Array(); // Array containing all previously drawn paths
+    let drawingGroup = draw.group().addClass("currentLayer");
+    let gridgroup = grid.group().addClass("Gridgroup");
+    let hoverGroup = draw.group().addClass("hover layer").addClass("currentHover");
+    let lineGroups = Array(); // Groups containg different linewidths
+    for (let a = 0; a < 4; a++) {
+        let g = draw.group();
+        drawingGroup.add(g)
+        lineGroups.push(g);
+    }
+    let currentMouseGridPosition = Array();
+    let previousMouseGridPosition = Array();
+    let mousePosition = Array();
+    let drawStartGridPosition = Array();  // Stores the grid point on where drawing started
+    let pathStartPoint = Array(); // Poin where mouse was previously set down
+    let pathLastPoint = Array(); // Previously placed point
     let gridPoints = Array(); // contains all the current grid cordinates
     let upperLeftPoint = Array(); // most upper left point on current grid
-
-    drawGrid();
-
-    let cursor = grid.circle(10).move(origin[0] - 5, origin[1] - 5).fill("none").stroke({ width: 1, color: "black" });
     let TOOL = "LINE" // Current drawing tool
     let ARC_DIRECTION = 1;
-    let FRACTAL_OFFSET = 3;
-    let FRACTALIZE = true;
+    let FRACTAL_OFFSET = 0;
+    let FRACTAL_SYMMETRY_COUNT = 1;
+    let userSetOrigin = Array();
+    let pageOrigin = [canvas.width() / 2, canvas.height() / 2];
+    let deleteKeyPressed = false; // Is set to true if delete key is pressed down
+    let shiftKeyPressed = false;
+    let maskMode = false;
+    let symbolList = Array(); // List containing the imported symbols
+    let selectedSymbol; // Currently selected symbol
+    let selectedSymbolUse; // Currently selected symbols instance "<use> tag"
+
+    loadExisting(); // Loads previously drawn symbols to dom
+    drawGrid(); // Creates a grid
+
+    let cursor = uiOverlay.circle(10).move(origin[0] - 5, origin[1] - 5).fill("none").stroke({ color: "black" });
+    let originIndicator = uiOverlay.circle(10).move(pageOrigin[0] - 5, pageOrigin[1] - 5).fill("none").stroke({ width: 3, color: "blue" });
 
     // Draws temporary howering lines to visualize what would be drawn if user releases mouse
     function drawHowerLine() {
         clearHoverLines();
-        let currentPos = fractalizePoint([canvas.width() / 2, canvas.height() / 2], currentMouseGridPosition);
+        let currentPos = fractalizePoint(currentMouseGridPosition);
         for (let a = 0; a < pathLastPoint.length; a++) {
             for (let b = 0; b < pathLastPoint[a].length; b++) {
                 let startP = pathLastPoint[a][b];
                 let endP = currentPos[a][b];
-                let newLine = draw.path().fill('none').stroke({ color: 'black', width: lineWidth, linecap: 'round' }).addClass("hover");;
+                let newLine = draw.path().fill('none').stroke({ lineWidth, linecap: 'round' }).addClass("hover");
+                newLine.M(startP[0], startP[1])
+                if (maskMode) newLine.stroke('blue');
                 addSegement(newLine, startP, endP);
-                hoverLayer.add(newLine);
+                hoverGroup.add(newLine);
                 hoverPath.push(newLine);
             }
         }
@@ -91,28 +126,76 @@
         });
         hoverPath = []
     }
-    function mouseClick(e) {
+    function mouseDown(e, redrawPath) {
         updateMousePos(e);
+        // Checks that the position is within our drawing area and we are using the move tool
+        if (!currentMouseGridPosition || TOOL === "MOVE") return;
+        drawStartGridPosition = currentMouseGridPosition;
         drawing = true;
-
-        pathStartPoint = fractalizePoint([canvas.width() / 2, canvas.height() / 2], currentMouseGridPosition);
-        //  !Continuing old path
-        if (JSON.stringify(pathLastPoint) != JSON.stringify(pathStartPoint)) {
+        pathStartPoint = fractalizePoint(currentMouseGridPosition);
+        if (maskMode) {
+            //  If we did not start at the end of the last draw - make a new path
+            let prevPoint = pathLastPoint;
+            if (activePath && activePath[0])
+                prevPoint = fractalizePoint(activePath[0].getSegment(activePath[0].getSegmentCount() - 1).coords);
+            if (JSON.stringify(prevPoint) != JSON.stringify(pathStartPoint)) {
+                pathLastPoint = pathStartPoint;
+                makeNewPath();
+            }
+        }
+        else {
             pathLastPoint = pathStartPoint;
             makeNewPath();
         }
     }
     function mouseMove(e) {
-        positionToGrid([e.pageX, e.pageY], true);
-        if (!drawing) return;
-        updateMousePos(e);
-        drawHowerLine();
+        mousePosition = [e.pageX, e.pageY];
+        positionToGrid(mousePosition, true); // Updates cursor position
+        updateMousePos(e); // Updates the current and previous positions
+        // MOVING A SYMBOL
+        if (TOOL === "MOVE" && selectedSymbol) {
+            if (currentMouseGridPosition != previousMouseGridPosition) {
+                // Determines mouseposition relative to page origin
+                let dX = Math.round((currentMouseGridPosition[0] - pageOrigin[0]) * 100) / 100;
+                let dY = Math.round((currentMouseGridPosition[1] - pageOrigin[1]) * 100) / 100;
+                // Moves the symbol
+                selectedSymbolUse.transform({
+                    translateX: dX,
+                    translateY: dY,
+                    rotate: selectedSymbolUse.transform().rotate
+                })
+            }
+        }
+        // UPDATING HOVER LINES
+        else if (drawing) {
+            // Checks that the position is within our drawing area and if not cancel current draw
+            if (!currentMouseGridPosition) {
+                clearActivePath();
+                clearHoverLines();
+                drawing = false;
+                return;
+            }
+            drawHowerLine();
+        }
     }
     function mouseUp() {
-        drawing = false;
-        addPointToActivePath(currentMouseGridPosition);
-        clearHoverLines();
-        if (activePath[0].getSegmentCount() < 2) clearActivePath(true);
+        // Checks that the position is within our drawing area
+        if (!currentMouseGridPosition) return;
+        // ENDING A MOVE
+        if (TOOL === "MOVE") {
+            if (selectedSymbol)
+                selectedSymbol.children().css('stroke', 'black');
+            selectedSymbol = undefined;
+        }
+        // ENDING A DRAW
+        else {
+            drawing = false;
+            if (JSON.stringify(currentMouseGridPosition) != JSON.stringify(pathStartPoint[0][0]))
+                addPointToActivePath(currentMouseGridPosition);
+            else clearActivePath(true);
+            clearHoverLines();
+
+        }
     }
     function clearActivePath(remove) {
         if (remove)
@@ -126,16 +209,31 @@
         // Adds new paths to layer and saves references
         for (let a = 0; a < pathStartPoint.length; a++) {
             for (let b = 0; b < pathStartPoint[a].length; b++) {
-                let newLine = draw.path().fill('none').stroke({ color: 'black', width: lineWidth, linecap: 'round' });
+                let newLine = draw.path().stroke({ width: lineWidth, linecap: 'round' }).fill('none').addClass("default")
+                if (maskMode) newLine.stroke('blue').fill({ color: 'blue', opacity: '0.3' })
+                // Adds event listeners to the new path
+                newLine.mousemove(() => { hoveringOverLine(newLine) })
                 newLine.M(pathStartPoint[a][b][0], pathStartPoint[a][b][1]);
-                activeLayer.add(newLine);
+                // Adds the new line to its corresponding line group 
+                lineGroups[lineWidth - 1].add(newLine);
                 activePath.push(newLine);
             }
         }
     }
+    function hoveringOverLine(line) {
+        if (deleteKeyPressed) line.remove();
+    }
+    // Function that resets path in mid draw (for example if the symmetry count changed while in the midle of drawing a line)
+    function redrawPath() {
+        clearActivePath();
+        clearHoverLines();
+        pathLastPoint = fractalizePoint(drawStartGridPosition);
+        makeNewPath();
+        drawHowerLine();
+    }
     function addPointToActivePath() {
         clearHoverLines();
-        let pathCurrentPoint = fractalizePoint([canvas.width() / 2, canvas.height() / 2], currentMouseGridPosition);
+        let pathCurrentPoint = fractalizePoint(currentMouseGridPosition);
         let pathNro = 0;
         for (let a = 0; a < pathStartPoint.length; a++) {
             for (let b = 0; b < pathStartPoint[a].length; b++) {
@@ -144,23 +242,30 @@
             }
         }
         pathLastPoint = pathCurrentPoint;
+        // We are drawing a mask and it was now closed (For some reason this is not working with Arcs)
+        if (maskMode && JSON.stringify(pathLastPoint[0][0]) === JSON.stringify(pathStartPoint[0][0])) {
+            activePath.forEach(maskPath => {
+                console.log("teataa")
+                maskPath.Z();
+                maskPath.fill({ color: 'antiquewhite', opacity: '1' }).stroke({ color: 'black', width: lineWidth, linecap: 'round' })
+            });
+        }
     }
     // function that determines what type of line segment should be added to the path
     function addSegement(path, pStart, pEnd) {
         if (TOOL === "LINE" || TOOL === "LINEPEN") {
-            path.M(pStart[0], pStart[1])
             path.L(pEnd[0], pEnd[1]);
         }
         if (TOOL === "ARC") {
             let distance = getDistance(pStart, pEnd);
-            path.M({ x: pStart[0], y: pStart[1] }).A(distance / 2, distance / 2, 0, 0, ARC_DIRECTION, { x: pEnd[0], y: pEnd[1] });
+            path.A(distance / 2, distance / 2, 0, 0, ARC_DIRECTION, { x: pEnd[0], y: pEnd[1] });
         }
         return path;
     }
     function undo() {
         if (activePath) {
+            console.log("Deleting active path")
             activePath.forEach(symmetryPath => {
-                symmetryPath.removeSegment(symmetryPath.getSegmentCount() - 1);
                 symmetryPath.removeSegment(symmetryPath.getSegmentCount() - 1);
                 if (symmetryPath.getSegmentCount() === 1)
                     symmetryPath.remove();
@@ -169,70 +274,26 @@
         }
         else {
             let prevPath = pathArchive[pathArchive.length - 1];
-            if (prevPath)
+            if (prevPath) {
                 prevPath.forEach(symmetryPath => {
                     symmetryPath.removeSegment(symmetryPath.getSegmentCount() - 1);
                     symmetryPath.removeSegment(symmetryPath.getSegmentCount() - 1);
                     if (symmetryPath.getSegmentCount() <= 1)
                         symmetryPath.remove();
                 });
-            if (prevPath[0].getSegmentCount() <= 1) pathArchive.pop();
+                if (prevPath[0].getSegmentCount() === 0) pathArchive.pop();
+            }
         }
-
-
     }
     function updateMousePos(e) {
         previousMouseGridPosition = currentMouseGridPosition;
         currentMouseGridPosition = positionToGrid([e.pageX, e.pageY]);
     }
-    // Catches keyboard events
-    document.addEventListener('keydown', (e) => {
-        console.log(e.key);
-        if (e.keyCode === 32) addPointToActivePath();
-        if (e.key === "l") {
-            TOOL = "LINE"
-            drawHowerLine();
-        }
-        if (e.key === "a") {
-            if (TOOL === "ARC") {
-                if (ARC_DIRECTION === 1) ARC_DIRECTION = 0;
-                else ARC_DIRECTION = 1;
-                drawHowerLine();
-            }
-            TOOL = "ARC"
-        }
-        if (e.key === "z") undo();
-        if (e.key === "+") FRACTAL_OFFSET++;
-        if (e.key === "-") FRACTAL_OFFSET--;
-        if (e.key === "f") FRACTALIZE = !FRACTALIZE;
-        if (e.key === "d") {
-            download('art.svg', draw.svg());
-        }
-        // DOWN ARROW
-        if (e.keyCode === 40) {
-            gridSize /= 2;
-            drawGrid();
-        }
-        // UP ARROW
-        if (e.keyCode === 38) {
-            gridSize *= 2;
-            drawGrid();
-        }
-        if(e.key==="1")
-            lineWidth = 0.8;
-            if(e.key==="2")
-            lineWidth = 1.6;
-            if(e.key==="3")
-            lineWidth = 2.4;
-
-            if(e.key==="4")
-            lineWidth = 3.2;
-    });
     // Functions used in generating more points to be drawn
     let symmetry = (o, p) => {
         let reflections = Array();
         for (let a = 0; a < symmetryCount; a++) {
-            reflections.push(rotateAroundPoint(o, p, angle * a));
+            reflections.push(rotateAroundPoint(o, p, 360 / symmetryCount * a));
         }
         return reflections;
     }
@@ -246,8 +307,7 @@
     let stepCloserToOrigo = (o, p) => {
         let d = [p[0] - o[0], p[1] - o[1]];
         let ret = [o[0] + d[0] / 2, o[1] + d[1] / 2];
-
-        ret.push(p)
+        ret.push(p) // Adds the given point - used as origin later on
         return ret;
     }
     // Rotates a point (p) around a point (o) by a given angle    
@@ -259,48 +319,55 @@
             ny = (cos * (p[1] - o[1])) - (sin * (p[0] - o[0])) + o[1];
         return [nx, ny];
     }
-    // Does calculations that generate extra points to be drawn
-    let fractalizePoint = (o, p, debugs) => {
+    function getOrigin() {
+        if (userSetOrigin.length > 1)
+            return userSetOrigin;
+        else return pageOrigin;
+    }
+    // Generates extra point based upon settings
+    let fractalizePoint = (p) => {
         // Will be returned
         let fractalPoints = new Array();
-
+        let origin = getOrigin();
         // Creates symmetry
-        let syms = symmetry(o, p);
-        fractalPoints.push(syms); // Saves points
-
-        if (!FRACTALIZE)
+        let syms = symmetry(origin, p);
+        // Adds another level of symetry if origin has been set
+        if (userSetOrigin.length > 1) {
+            let originSyms = Array();
+            syms.forEach(sym => {
+                originSyms = originSyms.concat(symmetry(pageOrigin, sym))
+            });
+            syms = originSyms;
+        }
+        // Saves points
+        fractalPoints.push(syms);
+        // Return if no fractal symetry count or offset is set to 0
+        if (FRACTAL_SYMMETRY_COUNT === 0 || FRACTAL_OFFSET === 0)
             return fractalPoints;
 
-        // Steps outwards
-        let halfDist = Array();
-        syms.forEach(sympoint => {
-            halfDist.push(halfDistance(o, sympoint))
-        });
-        // Creates new symmetry around a new origin
-        let halfDistSym = Array();
-        halfDist.forEach(sympoint => {
-            halfDistSym = halfDistSym.concat(symmetry([sympoint[2][0], sympoint[2][1]], [sympoint[0], sympoint[1]]))
-        });
-        fractalPoints.push(halfDistSym); // Saves points
-
-
-        // Steps outwards
-        let halfDist2 = Array();
-        halfDistSym.forEach(sympoint => {
-            halfDist2.push(halfDistance(o, sympoint))
-        });
-        // Creates new symmetry around a new origin
-        let halfDistSym2 = Array();
-        halfDist2.forEach(sympoint => {
-            halfDistSym2 = halfDistSym2.concat(symmetry([sympoint[2][0], sympoint[2][1]], [sympoint[0], sympoint[1]]))
-        });
-        fractalPoints.push(halfDistSym2); // Saves points
-
-        return fractalPoints 
+        // Moves the points with the ammount of FRACTAL_OFFSET and then creates new set of symmetries
+        let halfDistanceSym = (sym) => {
+            let halfDist = Array();
+            sym.forEach(sympoint => {
+                halfDist.push(halfDistance(origin, sympoint))
+            });
+            // Creates new symmetry around a new origin
+            let halfDistSym = Array();
+            halfDist.forEach(sympoint => {
+                halfDistSym = halfDistSym.concat(symmetry([sympoint[2][0], sympoint[2][1]], [sympoint[0], sympoint[1]]))
+            });
+            return halfDistSym;
+        }
+        for (let a = 0; a < FRACTAL_SYMMETRY_COUNT; a++) {
+            syms = halfDistanceSym(syms);
+            fractalPoints.push(syms);
+        }
+        return fractalPoints
     }
     // Gets the distance between two points
     function getDistance(p1, p2) {
-        return Math.hypot(p2[0] - p1[0], p2[1] - p1[1])
+        if (p1 && p2)
+            return Math.hypot(p2[0] - p1[0], p2[1] - p1[1])
     }
     // Draws a grid with the current gridSize
     function drawGrid() {
@@ -315,8 +382,7 @@
         let xStart = origin[0] - parseInt(origin[0] / xChange + 1) * xChange;
         let yStart = origin[1] - parseInt(origin[1] / yChange + 1) * yChange;
         upperLeftPoint = [xStart, yStart];
-        grid.circle(10).move(origin[0] - 5, origin[1] - 5).fill("none").stroke({ width: 1, color: "blue", opacity: 0.5 });
-
+        grid.circle(10).move(origin[0] - 5, origin[1] - 5).fill("none").stroke({ width: 1, color: "blue" });
         let x = xStart;
         let y = yStart;
         let evenLine = false;
@@ -326,7 +392,7 @@
         }
         do {
             do {
-                let point = grid.circle(2).move(x - 1, y - 1).fill({color: "blue", opacity: 0.5});
+                let point = grid.circle(2).move(x - 1, y - 1).fill({ color: "#8097ff" });
                 gridgroup.add(point)
                 x += xChange;
                 gridRow.push([x, y]);
@@ -343,7 +409,6 @@
             y += yChange;
             gridPoints.push(gridRow);
             gridRow = []
-
         }
         while (y < canvas.height())
     }
@@ -368,24 +433,210 @@
         let distances = possiblePoints.map(x => getDistance(x, mp));
         let idx = distances.indexOf(Math.min.apply(null, distances))
 
-        if (updateCursor) cursor.move(possiblePoints[idx][0] - 5, possiblePoints[idx][1] - 5);
+        // If we are updating the cursor and we found a closest point
+        if (updateCursor && possiblePoints[idx]) cursor.move(possiblePoints[idx][0] - 5, possiblePoints[idx][1] - 5);
         return possiblePoints[idx];
     }
     // Downloads the artwork
     function download(filename, text) {
-
-        var element = document.createElement('a');
+        text = text.replaceAll("class=\"default\"", "stroke=\"black\""); // Replaces class with a stroke color (will not be visible in vector software without a linecolor)
+        let element = document.createElement('a');
         element.setAttribute('href', 'data:text/plain;charset=utf-8,' + encodeURIComponent(text));
         element.setAttribute('download', filename);
         element.style.display = 'none';
         document.body.appendChild(element);
         element.click();
         document.body.removeChild(element);
+    }
+    // Handles keyboard commands
+    document.addEventListener('keydown', (e) => {
+        console.log(e.keyCode);
+        if (e.keyCode === 16) shiftKeyPressed = true;
+        if (e.keyCode === 32) addPointToActivePath();
+        if (e.key === "l") {
+            TOOL = "LINE"
+            drawHowerLine();
+        }
+        if (e.key === "a") {
+            if (TOOL === "ARC") {
+                if (ARC_DIRECTION === 1) ARC_DIRECTION = 0;
+                else ARC_DIRECTION = 1;
+                drawHowerLine();
+            }
+            TOOL = "ARC"
+        }
+        if (e.key === "n")
+            TOOL = "MOVE"
+        if (e.key === "r")
+            if (selectedSymbol)
+                selectedSymbolUse.rotate(180, pageOrigin[0], pageOrigin[1])
+        if (e.key === "z") undo();
+        if (e.key === "+") {
+            FRACTAL_OFFSET++;
+            redrawPath();
+        }
+        if (e.key === "-") {
+            FRACTAL_OFFSET--;
+            redrawPath();
+        }
+        if (e.key === "f") FRACTALIZE = !FRACTALIZE;
+        if (e.key === "d") {
+            download('art.svg', draw.svg());
+        }
+        // DOWN ARROW
+        if (e.keyCode === 40) {
+            gridSize /= 2;
+            drawGrid();
+        }
+        // UP ARROW
+        if (e.keyCode === 38) {
+            gridSize *= 2;
+            drawGrid();
+        }
+        if (e.key === "1")
+            lineWidth = 1;
+        if (e.key === "2")
+            lineWidth = 2;
+        if (e.key === "3")
+            lineWidth = 3;
+        if (e.key === "4")
+            lineWidth = 4;
+        if (e.key === "s") {
+            if (symmetryCount === 3) symmetryCount = 6;
+            else symmetryCount = 3;
+            if (drawing) redrawPath();
+        }
+        if (e.key === "o") {
+            userSetOrigin = positionToGrid(mousePosition, true);
+            originIndicator.move(userSetOrigin[0] - 5, userSetOrigin[1] - 5)
+            if (parseInt(userSetOrigin[0]) === parseInt(pageOrigin[0]) && parseInt(userSetOrigin[1]) === parseInt(pageOrigin[1]))
+                userSetOrigin = []
+        }
+        if (e.keyCode === 46) deleteKeyPressed = true;
+        if (e.key === 'm') maskMode = !maskMode;
+        if (e.key === "p") {
+            // Makes new id for the file to be saved
+            let rollingId = localStorage.getItem("rollingId");
+            if (!rollingId)
+                rollingId = 1;
+            else {
+                rollingId = parseInt(rollingId.substring(1, rollingId.length));
+                rollingId++;
+            }
+            rollingId = "F" + rollingId
+            localStorage.setItem("rollingId", rollingId);
+            drawingGroup.toggleClass("currentLayer");
+            drawingGroup.toggleClass("symbol");
+            let saveThis = drawingGroup.svg() // Takes everything we have drawn and stores it in a variable
+            drawingGroup.toggleClass("symbol");
+            drawingGroup.toggleClass("currentLayer");
+            // Gets existing storage names and add's the new file
+            let fileNames = new Array();
+            fileNames = JSON.parse(localStorage.getItem("fileNames")); //get them back
+            if (!fileNames) fileNames = new Array();
+            fileNames.push(rollingId);
+            localStorage.setItem("fileNames", JSON.stringify(fileNames)); //store colors
+            // Saves the svg data
+            localStorage.setItem(rollingId, saveThis)
+            // Refreshes list of symbols
+            loadExisting();
+        }
+    });
+    document.addEventListener('keyup', (e) => {
+        if (e.keyCode === 16) shiftKeyPressed = false;
+        if (e.keyCode === 46) deleteKeyPressed = false;
+    });
 
+    // Adds symbol to the canvas and has adds listeners on selecting and higlighting symbols
+    function addSymbolToCanvas(content) {
+        let symbol = draw.symbol().add(content)
+        let use = draw.use(symbol)
+        drawingGroup.add(use)
+        symbol.mouseover(function () {
+            if (TOOL != "MOVE" || selectedSymbol) return;
+            this.children().css('stroke', 'blue');
+        })
+        symbol.mousedown(function () {
+            if (TOOL != "MOVE") return;
+            // Deselect the old symbol and select the clicked one
+            if (selectedSymbol != this) {
+                if (selectedSymbol)
+                    selectedSymbol.children().css('stroke', 'black');
+                selectedSymbol = this;
+                selectedSymbolUse = use;
+                selectedSymbol.children().css('stroke', 'blue');
+            }
+            else {
+                console.log("!!")
+                selectedSymbol = undefined;
+                this.children().css('stroke', 'black');
+            }
+        })
+        symbol.mouseout(function () {
+            if (TOOL != "MOVE") return;
+            if (selectedSymbol != this)
+                this.children().css('stroke', 'black');
+        })
+    }
+    // Loads existing drawings from localstorage to a div
+    function loadExisting() {
+        // Removes the existing list before reading them from localstorage (Stupid hack to make this a refresh function as well)
+        $(".fileWindow").children().remove();
+        let fileNames = new Array();
+        fileNames = JSON.parse(localStorage.getItem("fileNames")); //get them back
+        if (fileNames)
+            fileNames.forEach(file => {
+                // Creates a new div wit the id as filename
+                let newDiv = $("#saved").append("<div id='" + file + "'</div>")
+                let content = localStorage.getItem(file);
+                $("#" + file).on("click", function () {
+                    addSymbolToCanvas(content)
+                });;
+                let next = SVG().addTo('#' + file).size(window.innerHeight / 4, window.innerHeight).height(window.innerWidth / 10).width(window.innerWidth / 10).addClass("savedSymbol");
+                let symbol = next.symbol()
+                symbol.add(content).viewbox(0, 0, window.innerHeight, window.innerHeight)
+                let use = next.use(symbol)
+                saved.push(next);
+                // Makes a delete button with a event listener
+                let deleteButton = $("#" + file).parent().append("<i id='" + file + "' class='material-icons'>delete_outline</i>");
+                deleteButton.children('i').on("click", function () {
+                    localStorage.removeItem(file)
+                    fileNames = JSON.parse(localStorage.getItem("fileNames")); //gets filenames
+                    fileNames = fileNames.filter(e => e != file);
+                    localStorage.setItem("fileNames", JSON.stringify(fileNames));
+                    loadExisting();
+                });
+            });
+    }
+    // Handles mouse scroll
+    let previousMouseWheelEventTime = 0;
+    function mouseWheel(e) {
+        if (!drawing) return;
+        let curTime = new Date().getTime();
+        let timeDelta = curTime - previousMouseWheelEventTime;
+        if (timeDelta >= 400 && Math.abs(e.deltaY) > 10) {
+            const delta = Math.sign(e.deltaY);
+            if (shiftKeyPressed) {
+                if (delta < 0) FRACTAL_SYMMETRY_COUNT++;
+                else FRACTAL_SYMMETRY_COUNT--;
+                if (FRACTAL_SYMMETRY_COUNT > 4) FRACTAL_SYMMETRY_COUNT = 4;
+                if (FRACTAL_SYMMETRY_COUNT < 0) FRACTAL_SYMMETRY_COUNT = 0;
+            }
+            else {
+                if (delta > 0) FRACTAL_OFFSET--;
+                else FRACTAL_OFFSET++;
+                if (FRACTAL_OFFSET > 15) FRACTAL_OFFSET = 15;
+                if (FRACTAL_OFFSET < 0) FRACTAL_OFFSET = 0;
+            }
+            previousMouseWheelEventTime = curTime;
+            redrawPath();
+        }
     }
     // Binds mouse events to functions
-    document.onmousedown = mouseClick;
+    document.onmousedown = mouseDown;
     document.onmousemove = mouseMove;
     document.onmouseup = mouseUp;
+    document.onwheel = mouseWheel;
 </script>
+
 </html>
