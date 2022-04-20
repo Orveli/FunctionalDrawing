@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html>
+<script src="https://kit.fontawesome.com/d42797d33e.js" crossorigin="anonymous"></script>
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@svgdotjs/svg.js@3.0/dist/svg.min.js"></script>
+<script type="text/javascript" src="libs/svg.path.js"></script>
+<link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+
+<head>
+    <style>
+        div.svg {
+            position: fixed;
+            overflow: scroll;
+            left: 0;
+            top: 0;
+        }
+
+        #saved {
+            position: absolute;
+            right: 0;
+            top: 0;
+            background-color: white;
+            height: 100%;
+        }
+
+        .symbol {
+            stroke: red;
+        }
+
+        .currentLayer {
+            stroke: black;
+        }
+
+        .hover {
+            pointer-events: all;
+            stroke: blue !important;
+        }
+    </style>
+</head>
+
+<body style="margin: 0px;background-color: antiquewhite;">
+    <div class="svg" id="canvas" style="height: 300%; width: 100%;   background-color: blue;">
+        <br>
+        <br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br>as
+        Contrary to popular belief, Lorem Ipsum is not simply random text. It has roots in a piece of classical Latin literature from 45 BC, making it over 2000 years old. Richard McClintock, a Latin professor at Hampden-Sydney College in Virginia, looked up one of the more obscure Latin words, consectetur, from a Lorem Ipsum passage, and going through the cites of the word in classical literature, discovered the undoubtable source. Lorem Ipsum comes from sections 1.10.32 and 1.10.33 of "de Finibus Bonorum et Malorum" (The Extremes of Good and Evil) by Cicero, written in 45 BC. This book is a treatise on the theory of ethics, very popular during the Renaissance. The first line of Lorem Ipsum, "Lorem ipsum dolor sit amet..", comes from a line in section 1.10.32.
+
+        The standard chunk of Lorem Ipsum used since the 1500s is reproduced below for those interested. Sections 1.10.32 and 1.10.33 from "de Finibus Bonorum et Malorum" by Cicero are also reproduced in their exact original form, accompanied by English versions from the 1914 translation by H. Rackham.
+    </div>
+    <div class="svg" id="grid" style="pointer-events: none;">
+    </div>
+    <div class="svg" id="uiOverlay" style="pointer-events: none;">
+    </div>
+    <div class="fileWindow" id="saved" style="overflow: auto;">
+    </div>
+</body>
